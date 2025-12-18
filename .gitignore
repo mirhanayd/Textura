@@ -1,25 +1,4 @@
 # Build and runtime artifacts
-bin/
-build/
-outputs/
-
-# Object and executable files
-*.o
-*.obj
-*.exe
-*.dll
-*.lib
-*.a
-*.so
-*.dylib
-
-# Editor/IDE
-.vscode/
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
-
-# Logs and temporary
-*.log
-tmp/
+/bin/
+/build/
+/outputs/
