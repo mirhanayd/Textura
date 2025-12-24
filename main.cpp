@@ -33,7 +33,7 @@ struct Vec3 {
 
 // --- CONFIG ---
 const float GRAVITY = 0.5f;
-const float DAMPING = 0.98f;
+const float DAMPING = 0.99f;
 const int ITERATIONS = 8;
 
 struct Particle {
@@ -175,7 +175,7 @@ public:
     void applyWind(float dt) {
         // wind vector that changes over time
         Vec3 W(sinf(timeSec*2.0f) + 0.5f, cosf(timeSec), sinf(timeSec));
-        float strength = 1.5f;
+        float strength = 3.5f;
         for (auto &p: particles) {
             if (p.isPinned) continue;
             Vec3 N(p.nx,p.ny,p.nz);
@@ -269,10 +269,10 @@ int main() {
     int canvasW = 800, canvasH = 600;
     ColorImage img(canvasW, canvasH);
 
-    TexturaSimulation sim(25,25,12.0f, canvasW, canvasH);
+    TexturaSimulation sim(40, 40, 8.0f, canvasW, canvasH);
     Light light; light.dir = Vec3(0.0f, -0.5f, -1.0f);
 
-    for (int frame=0; frame<60; ++frame) {
+    for (int frame=0; frame<300; ++frame) {
         sim.update();
 
         // clear and z-buffer
@@ -291,6 +291,6 @@ int main() {
         cout << name << " kaydedildi." << endl;
     }
 
-    cout << "Islem tamam. 60 kare olusturuldu." << endl;
+    cout << "Islem tamam. 300 kare olusturuldu." << endl;
     return 0;
 }
