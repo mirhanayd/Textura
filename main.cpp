@@ -1,263 +1,194 @@
-// Advanced cloth simulation with wind, sphere collision, and software rasterization
-// Single-file implementation for course submission. Uses Image.h API (ColorImage)
-
 #include <iostream>
 #include <vector>
 #include <cmath>
 #include <string>
 #include <algorithm>
 #include <iomanip>
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <sstream>
-#include <cstring>
 #include "Image.h"
 #include <array>
 
 using namespace std;
 
-// --- Utility Vec3 ---
-struct Vec3 {
+// Vektor islemleri
+struct V3 {
     float x, y, z;
-    Vec3(): x(0), y(0), z(0) {}
-    Vec3(float X, float Y, float Z=0.0f): x(X), y(Y), z(Z) {}
-    Vec3 operator+(const Vec3& o) const { return Vec3(x+o.x,y+o.y,z+o.z); }
-    Vec3 operator-(const Vec3& o) const { return Vec3(x-o.x,y-o.y,z-o.z); }
-    Vec3 operator*(float s) const { return Vec3(x*s,y*s,z*s); }
-    Vec3 operator/(float s) const { return Vec3(x/s,y/s,z/s); }
-    float dot(const Vec3& o) const { return x*o.x + y*o.y + z*o.z; }
-    Vec3 cross(const Vec3& o) const { return Vec3(y*o.z - z*o.y, z*o.x - x*o.z, x*o.y - y*o.x); }
-    float length() const { return sqrtf(x*x + y*y + z*z); }
-    Vec3 normalized() const { float L = length(); return L==0? Vec3(0,0,0) : (*this)/L; }
+    V3(float a=0, float b=0, float c=0) : x(a), y(b), z(c) {}
+    
+    V3 operator+(const V3& o) const { return V3(x+o.x, y+o.y, z+o.z); }
+    V3 operator-(const V3& o) const { return V3(x-o.x, y-o.y, z-o.z); }
+    V3 operator*(float s) const { return V3(x*s, y*s, z*s); }
+    V3 operator/(float s) const { return V3(x/s, y/s, z/s); }
+    
+    float dot(const V3& o) const { return x*o.x + y*o.y + z*o.z; }
+    
+    V3 cross(const V3& o) const { 
+        return V3(y*o.z - z*o.y, z*o.x - x*o.z, x*o.y - y*o.x); 
+    }
+    
+    float len() const { return sqrtf(x*x + y*y + z*z); }
+    
+    V3 norm() const { 
+        float L = len(); 
+        return L==0 ? V3(0,0,0) : (*this)/L; 
+    }
 };
 
-// --- CONFIG ---
-const float GRAVITY = 0.5f;
-const float DAMPING = 0.99f;
-const int ITERATIONS = 20;
+struct Nokta {
+    float x, y, z;       // su anki pozisyon
+    float ex, ey, ez;    // eski pozisyon
+    float nx, ny, nz;    // normal (isik ve ruzgar icin)
+    bool kilit;          // sabit mi?
 
-struct Particle {
-    float x,y,z; // position
-    float oldX, oldY, oldZ; // previous position (Verlet)
-    bool isPinned;
-    // normal for lighting / wind
-    float nx, ny, nz;
-
-    Particle(float px=0,float py=0,float pz=0,bool pinned=false)
-      : x(px), y(py), z(pz), oldX(px), oldY(py), oldZ(pz), isPinned(pinned), nx(0), ny(0), nz(0) {}
+    Nokta(float a=0, float b=0, float c=0, bool k=false) 
+        : x(a), y(b), z(c), ex(a), ey(b), ez(c), nx(0), ny(0), nz(0), kilit(k) {}
 };
 
-struct Constraint {
-    int p1, p2;
-    float restLength;
-    Constraint(int a,int b,float r): p1(a), p2(b), restLength(r) {}
+struct Bag { 
+    int p1, p2; 
+    float mesafe; 
 };
 
-struct Sphere { float x,y,z,radius; };
-
-class TexturaSimulation {
+class Simulasyon {
 public:
-    int gridW, gridH;
-    vector<Particle> particles;
-    vector<Constraint> constraints;
-    Sphere sphere;
-    float timeSec = 0.0f;
+    int gen, yuk;
+    vector<Nokta> noktalar;
+    vector<Bag> baglar;
+    float zaman = 0.0f;
 
-    TexturaSimulation(int gw, int gh, float spacing, int canvasW, int canvasH) {
-        gridW = gw; gridH = gh;
-        // construct cloth centered roughly
-        for (int r=0;r<gridH;r++){
-            for (int c=0;c<gridW;c++){
-                bool pinned = (r==0 && (c==0 || c==gridW/2 || c==gridW-1));
-                float px = 200.0f + c*spacing;
-                float py = 50.0f + r*spacing;
-                float pz = 0.0f; // flat cloth initially
-                particles.emplace_back(px,py,pz,pinned);
+    Simulasyon(int g, int y, float aralik) : gen(g), yuk(y) {
+        //kumasi olustur
+        for (int r = 0; r < yuk; r++) {
+            for (int c = 0; c < gen; c++) {
+                bool sabit = (r == 0 && (c == 0 || c == gen/2 || c == gen-1));
+                noktalar.emplace_back(200.0f + c*aralik, 50.0f + r*aralik, 0.0f, sabit);
             }
         }
-        for (int r=0;r<gridH;r++){
-            for (int c=0;c<gridW;c++){
-                if (c < gridW-1) constraints.emplace_back(r*gridW+c, r*gridW+(c+1), spacing);
-                if (r < gridH-1) constraints.emplace_back(r*gridW+c, (r+1)*gridW+c, spacing);
+        //bağlantilari kur
+        for (int r = 0; r < yuk; r++) {
+            for (int c = 0; c < gen; c++) {
+                if (c < gen - 1) baglar.push_back({r*gen + c, r*gen + c + 1, aralik});
+                if (r < yuk - 1) baglar.push_back({r*gen + c, (r+1)*gen + c, aralik});
             }
         }
-
-        // place sphere slightly behind the cloth in z
-        sphere.x = canvasW * 0.5f;
-        sphere.y = canvasH * 0.5f + 40.0f;
-        sphere.z = 30.0f; // towards camera
-        sphere.radius = 80.0f;
     }
 
-    void applyVerlet(float dt=1.0f) {
-        for (auto &p : particles) {
-            if (p.isPinned) continue;
-            float vx = (p.x - p.oldX) * DAMPING;
-            float vy = (p.y - p.oldY) * DAMPING;
-            float vz = (p.z - p.oldZ) * DAMPING;
-            p.oldX = p.x; p.oldY = p.y; p.oldZ = p.z;
+    void guncelle() {
+        zaman += 0.06f;
+
+        // 1. Adim: Verlet (Hareket)
+        for (auto &p : noktalar) {
+            if (p.kilit) continue;
+            
+            float vx = (p.x - p.ex) * 0.99f;
+            float vy = (p.y - p.ey) * 0.99f;
+            float vz = (p.z - p.ez) * 0.99f;
+            
+            p.ex = p.x; 
+            p.ey = p.y; 
+            p.ez = p.z;
+            
             p.x += vx;
-            p.y += vy + GRAVITY * dt;
-            p.z += vz; // gravity only in y for cloth
+            p.y += vy + 0.5f; // Yercekimi
+            p.z += vz;
         }
-    }
-
-    void satisfyConstraints() {
-        for (int i=0;i<ITERATIONS;i++){
-            for (auto &c : constraints){
-                Particle &a = particles[c.p1];
-                Particle &b = particles[c.p2];
-                Vec3 pa(a.x,a.y,a.z), pb(b.x,b.y,b.z);
-                Vec3 d = pb - pa;
-                float dist = d.length(); if (dist==0) continue;
-                float diff = (c.restLength - dist)/dist;
-                Vec3 ofs = d * (0.5f * diff);
-                if (!a.isPinned) { a.x -= ofs.x; a.y -= ofs.y; a.z -= ofs.z; }
-                if (!b.isPinned) { b.x += ofs.x; b.y += ofs.y; b.z += ofs.z; }
+        
+        //normalleri hesapla
+        for (auto &p : noktalar) { p.nx = p.ny = p.nz = 0; }
+        
+        for (int r = 0; r < yuk - 1; r++) {
+            for (int c = 0; c < gen - 1; c++) {
+                int i0 = r*gen + c;
+                int i1 = r*gen + c + 1;
+                int i2 = (r+1)*gen + c;
+                int i3 = (r+1)*gen + c + 1;
+                
+                //iki ucgen icin normal hesabi
+                auto hesapla = [&](int a, int b, int c_idx) {
+                    V3 v1(noktalar[b].x - noktalar[a].x, noktalar[b].y - noktalar[a].y, noktalar[b].z - noktalar[a].z);
+                    V3 v2(noktalar[c_idx].x - noktalar[a].x, noktalar[c_idx].y - noktalar[a].y, noktalar[c_idx].z - noktalar[a].z);
+                    V3 n = v1.cross(v2);
+                    noktalar[a].nx += n.x; noktalar[a].ny += n.y; noktalar[a].nz += n.z;
+                    noktalar[b].nx += n.x; noktalar[b].ny += n.y; noktalar[b].nz += n.z;
+                    noktalar[c_idx].nx += n.x; noktalar[c_idx].ny += n.y; noktalar[c_idx].nz += n.z;
+                };
+                
+                hesapla(i0, i2, i1);
+                hesapla(i1, i2, i3);
             }
         }
-    }
-
-    void collisionSphere(float epsilon=0.01f) {
-        for (auto &p : particles) {
-            Vec3 pos(p.x,p.y,p.z);
-            Vec3 center(sphere.x,sphere.y,sphere.z);
-            Vec3 V = pos - center;
-            float D = V.length();
-            float minD = sphere.radius + epsilon;
-            if (D < minD) {
-                Vec3 n = (D==0? Vec3(0,1,0) : V / D);
-                Vec3 newPos = center + n * minD;
-                // simple friction: damp velocity via old position
-                float vx = (p.x - p.oldX) * 0.8f;
-                float vy = (p.y - p.oldY) * 0.8f;
-                float vz = (p.z - p.oldZ) * 0.8f;
-                p.x = newPos.x; p.y = newPos.y; p.z = newPos.z;
-                p.oldX = p.x - vx * 0.5f; p.oldY = p.y - vy * 0.5f; p.oldZ = p.z - vz * 0.5f;
-            }
+        // normalize et
+        for (auto &p : noktalar) {
+            V3 n(p.nx, p.ny, p.nz);
+            V3 nn = n.norm();
+            p.nx = nn.x; p.ny = nn.y; p.nz = nn.z; 
         }
-    }
-
-    void computeNormals() {
-        // reset
-        for (auto &p: particles) { p.nx = p.ny = p.nz = 0.0f; }
-        // accumulate triangle normals
-        for (int r=0;r<gridH-1;r++){
-            for (int c=0;c<gridW-1;c++){
-                int i0 = r*gridW + c;
-                int i1 = r*gridW + (c+1);
-                int i2 = (r+1)*gridW + c;
-                int i3 = (r+1)*gridW + (c+1);
-                // tri A: i0, i2, i1
-                addTriNormal(i0,i2,i1);
-                // tri B: i1, i2, i3
-                addTriNormal(i1,i2,i3);
-            }
+        //ruzgar
+        V3 W(sinf(zaman * 2.0f) + 0.5f, cosf(zaman), sinf(zaman));
+        for (auto &p : noktalar) {
+            if (p.kilit) continue;
+            
+            V3 N(p.nx, p.ny, p.nz);
+            float etki = max(0.0f, N.norm().dot(W.norm()));
+            
+            p.x += N.x * etki * 0.55f;
+            p.y += N.y * etki * 0.55f;
+            p.z += N.z * etki * 0.55f;
         }
-        // normalize
-        for (auto &p: particles) {
-            Vec3 n(p.nx,p.ny,p.nz);
-            Vec3 nn = n.normalized(); p.nx = nn.x; p.ny = nn.y; p.nz = nn.z;
-        }
-    }
-
-    void addTriNormal(int ia,int ib,int ic){
-        Particle &A = particles[ia]; Particle &B = particles[ib]; Particle &C = particles[ic];
-        Vec3 v1(B.x - A.x, B.y - A.y, B.z - A.z);
-        Vec3 v2(C.x - A.x, C.y - A.y, C.z - A.z);
-        Vec3 n = v1.cross(v2);
-        // accumulate to vertices
-        A.nx += n.x; A.ny += n.y; A.nz += n.z;
-        B.nx += n.x; B.ny += n.y; B.nz += n.z;
-        C.nx += n.x; C.ny += n.y; C.nz += n.z;
-    }
-
-    void applyWind(float dt) {
-        // wind vector that changes over time
-        Vec3 W(sinf(timeSec*2.0f) + 0.5f, cosf(timeSec), sinf(timeSec));
-        float strength = 18.5f;
-        for (auto &p: particles) {
-            if (p.isPinned) continue;
-            Vec3 N(p.nx,p.ny,p.nz);
-            float fac = max(0.0f, N.normalized().dot(W.normalized()));
-            // move particle by wind projected onto normal
-            p.x += N.x * fac * 0.03f * strength;
-            p.y += N.y * fac * 0.03f * strength;
-            p.z += N.z * fac * 0.03f * strength;
-        }
-    }
-
-    void update() {
-        timeSec += 0.06f;
-        applyVerlet();
-        computeNormals();
-        applyWind(0.06f);
-        satisfyConstraints();
-        collisionSphere(0.5f);
-    }
-
-    // triangle generation for drawing
-    void getTriangles(vector<array<int,3>>& tris) {
-        tris.clear();
-        for (int r=0;r<gridH-1;r++){
-            for (int c=0;c<gridW-1;c++){
-                int i0 = r*gridW + c;
-                int i1 = r*gridW + (c+1);
-                int i2 = (r+1)*gridW + c;
-                int i3 = (r+1)*gridW + (c+1);
-                std::array<int,3> t1 = {i0,i2,i1};
-                std::array<int,3> t2 = {i1,i2,i3};
-                tris.push_back(t1);
-                tris.push_back(t2);
+        //baglanti kontrolu (constraints)
+        for (int i = 0; i < 20; i++) {
+            for (auto &b : baglar) {
+                Nokta &p1 = noktalar[b.p1];
+                Nokta &p2 = noktalar[b.p2];
+                
+                V3 delta(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z);
+                float dist = delta.len();
+                
+                if (dist == 0) continue;
+                
+                float fark = (b.mesafe - dist) / dist;
+                V3 duzeltme = delta * (0.5f * fark);
+                
+                if (!p1.kilit) { p1.x -= duzeltme.x; p1.y -= duzeltme.y; p1.z -= duzeltme.z; }
+                if (!p2.kilit) { p2.x += duzeltme.x; p2.y += duzeltme.y; p2.z += duzeltme.z; }
             }
         }
     }
 };
-
-// --- Rasterizer ---
-struct Light { Vec3 dir; };
-
-// Barycentric helper
-static void barycentric(float x1,float y1,float x2,float y2,float x3,float y3,float px,float py,float &a,float &b,float &c){
-    float denom = (y2 - y3)*(x1 - x3) + (x3 - x2)*(y1 - y3);
-    if (fabsf(denom) < 1e-6f) { a=b=c=-1.0f; return; }
-    a = ((y2 - y3)*(px - x3) + (x3 - x2)*(py - y3)) / denom;
-    b = ((y3 - y1)*(px - x3) + (x1 - x3)*(py - y3)) / denom;
-    c = 1.0f - a - b;
-}
-
-// draw triangle with flat shading and z-buffer
-void drawTriangle(ColorImage& img, const Particle &p1, const Particle &p2, const Particle &p3, Light light, vector<float> &zbuf) {
-    int w = img.GetWidth(), h = img.GetHeight();
-    // project (orthographic)
-    float x1 = p1.x, y1 = p1.y, z1 = p1.z;
-    float x2 = p2.x, y2 = p2.y, z2 = p2.z;
-    float x3 = p3.x, y3 = p3.y, z3 = p3.z;
-
-    // compute triangle normal in 3D for lighting
-    Vec3 v1(x2-x1,y2-y1,z2-z1), v2(x3-x1,y3-y1,z3-z1);
-    Vec3 N = v1.cross(v2).normalized();
-    Vec3 L = light.dir.normalized();
-    float intensity = max(0.0f, N.dot(L));
-    // base color white scaled by intensity
-    unsigned char col = (unsigned char)max(20.0f, min(255.0f, 255.0f * intensity));
+void ucgen_ciz(ColorImage& im, Nokta &p1, Nokta &p2, Nokta &p3, V3 isik, vector<float> &zb) {
+    int w = im.GetWidth();
+    int h = im.GetHeight();
+    
+    // yüzey normali ve isik siddeti
+    V3 v1(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z);
+    V3 v2(p3.x - p1.x, p3.y - p1.y, p3.z - p1.z);
+    float yogunluk = max(0.0f, v1.cross(v2).norm().dot(isik.norm()));
+    unsigned char renk = (unsigned char)max(20.0f, min(255.0f, 255.0f * yogunluk));
 
     // bounding box
-    int minX = max(0, (int)floorf(min(min(x1,x2),x3)));
-    int maxX = min(w-1, (int)ceilf(max(max(x1,x2),x3)));
-    int minY = max(0, (int)floorf(min(min(y1,y2),y3)));
-    int maxY = min(h-1, (int)ceilf(max(max(y1,y2),y3)));
+    int minX = max(0, (int)floor(min({p1.x, p2.x, p3.x})));
+    int maxX = min(w-1, (int)ceil(max({p1.x, p2.x, p3.x})));
+    int minY = max(0, (int)floor(min({p1.y, p2.y, p3.y})));
+    int maxY = min(h-1, (int)ceil(max({p1.y, p2.y, p3.y})));
 
-    for (int py=minY; py<=maxY; ++py) {
-        for (int px=minX; px<=maxX; ++px) {
-            float a,b,cw; barycentric(x1,y1,x2,y2,x3,y3,(float)px+0.5f,(float)py+0.5f,a,b,cw);
-            if (a >= -1e-6f && b >= -1e-6f && cw >= -1e-6f) {
-                float pixelZ = a*z1 + b*z2 + cw*z3;
-                int idx = py * w + px;
-                if (pixelZ > zbuf[idx]) {
-                    zbuf[idx] = pixelZ;
-                    auto &pix = img(px,py);
-                    pix.r = col; pix.g = col; pix.b = col; pix.a = 255;
+    for (int y = minY; y <= maxY; y++) {
+        for (int x = minX; x <= maxX; x++) {
+            // Barycentric
+            float payda = (p2.y - p3.y)*(p1.x - p3.x) + (p3.x - p2.x)*(p1.y - p3.y);
+            if (fabs(payda) < 1e-6) continue;
+            
+            float u = ((p2.y - p3.y)*(x - p3.x) + (p3.x - p2.x)*(y - p3.y)) / payda;
+            float v = ((p3.y - p1.y)*(x - p3.x) + (p1.x - p3.x)*(y - p3.y)) / payda;
+            float w_bar = 1.0f - u - v;
+            
+            if (u >= -1e-6 && v >= -1e-6 && w_bar >= -1e-6) {
+                float z = u*p1.z + v*p2.z + w_bar*p3.z;
+                if (z > zb[y*w + x]) {
+                    zb[y*w + x] = z;
+                    im(x,y).r = renk; 
+                    im(x,y).g = renk; 
+                    im(x,y).b = renk; 
+                    im(x,y).a = 255;
                 }
             }
         }
@@ -265,32 +196,36 @@ void drawTriangle(ColorImage& img, const Particle &p1, const Particle &p2, const
 }
 
 int main() {
-    cout << "--- Textura Dynamics Simulasyonu (advanced) Basliyor ---" << endl;
-    int canvasW = 800, canvasH = 600;
-    ColorImage img(canvasW, canvasH);
+    cout << "--- Textura Simulation Starting ---" << endl;
+    int W = 800, H = 600;
+    ColorImage img(W, H);
+    Simulasyon sim(25, 25, 12.0f);     // 25x25 kumas, 12.0 birim aralik
+    V3 isik(0.0f, -0.5f, -1.0f);
 
-    TexturaSimulation sim(40,40,9.0f, canvasW, canvasH);
-    Light light; light.dir = Vec3(0.0f, -0.5f, -1.0f);
-
-    for (int frame=0; frame<300; ++frame) {
-        sim.update();
-
-        // clear and z-buffer
-        vector<float> zbuf(canvasW * canvasH, -1e9f);
-        for (int y=0;y<canvasH;y++) for (int x=0;x<canvasW;x++){ auto &p = img(x,y); p.r=30; p.g=30; p.b=30; p.a=255; }
-
-        // compute per-triangle and draw
-        vector<array<int,3>> tris; sim.getTriangles(tris);
-        for (auto &t : tris) {
-            drawTriangle(img, sim.particles[t[0]], sim.particles[t[1]], sim.particles[t[2]], light, zbuf);
+    for (int i = 0; i < 300; ++i) {
+        sim.guncelle();
+        
+        vector<float> zbuf(W*H, -1e9f);
+        for(int k=0; k<W*H; k++) { 
+            auto &p = img(k%W, k/W); 
+            p.r = 30; p.g = 30; p.b = 30; p.a = 255; 
+        }
+        
+        // çizimkısmı
+        for (int r = 0; r < sim.yuk - 1; r++) {
+            for (int c = 0; c < sim.gen - 1; c++) {
+                int idx = r * sim.gen + c;
+                ucgen_ciz(img, sim.noktalar[idx], sim.noktalar[idx+sim.gen], sim.noktalar[idx+1], isik, zbuf);
+                ucgen_ciz(img, sim.noktalar[idx+1], sim.noktalar[idx+sim.gen], sim.noktalar[idx+sim.gen+1], isik, zbuf);
+            }
         }
 
-        // save frame
-        ostringstream ss; ss << "outputs/frame_" << setw(3) << setfill('0') << frame << ".png";
-        string name = ss.str(); img.Save(name);
-        cout << name << " kaydedildi." << endl;
+        stringstream ss; 
+        ss << "outputs/frame_" << setw(3) << setfill('0') << i << ".png";
+        img.Save(ss.str());
+        
+        cout << ss.str() << " saved." << endl;
     }
-
-    cout << "Islem tamam. 60 kare olusturuldu." << endl;
+    cout << "Process finished. 300 frames created." << endl;
     return 0;
 }
