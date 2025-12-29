@@ -37,8 +37,8 @@ struct V3 {
 struct Nokta {
     float x, y, z;       // su anki pozisyon
     float ex, ey, ez;    // eski pozisyon
-    float nx, ny, nz;    // normal (isik ve ruzgar icin)
-    bool kilit;          // sabit mi?
+    float nx, ny, nz;    //isik ve ruzgar
+    bool kilit;          // sabit mi??
 
     Nokta(float a=0, float b=0, float c=0, bool k=false) 
         : x(a), y(b), z(c), ex(a), ey(b), ez(c), nx(0), ny(0), nz(0), kilit(k) {}
@@ -57,7 +57,7 @@ public:
     float zaman = 0.0f;
 
     Simulasyon(int g, int y, float aralik) : gen(g), yuk(y) {
-        //kumasi olustur
+        //kumasi olusturuoz
         for (int r = 0; r < yuk; r++) {
             for (int c = 0; c < gen; c++) {
                 bool sabit = (r == 0 && (c == 0 || c == gen/2 || c == gen-1));
@@ -76,7 +76,7 @@ public:
     void guncelle() {
         zaman += 0.06f;
 
-        // 1. Adim: Verlet (Hareket)
+        // verlet
         for (auto &p : noktalar) {
             if (p.kilit) continue;
             
@@ -89,11 +89,10 @@ public:
             p.ez = p.z;
             
             p.x += vx;
-            p.y += vy + 0.5f; // Yercekimi
+            p.y += vy + 0.5f; // Yercekiminiburda ayarrlıoz
             p.z += vz;
         }
         
-        //normalleri hesapla
         for (auto &p : noktalar) { p.nx = p.ny = p.nz = 0; }
         
         for (int r = 0; r < yuk - 1; r++) {
@@ -196,13 +195,14 @@ void ucgen_ciz(ColorImage& im, Nokta &p1, Nokta &p2, Nokta &p3, V3 isik, vector<
 }
 
 int main() {
-    cout << "--- Textura Simulation Starting ---" << endl;
     int W = 800, H = 600;
     ColorImage img(W, H);
-    Simulasyon sim(25, 25, 12.0f);     // 25x25 kumas, 12.0 birim aralik
+    Simulasyon sim(25, 25, 12.0f);     // 25x25 kumas 12.0 birim aralik
     V3 isik(0.0f, -0.5f, -1.0f);
 
-    for (int i = 0; i < 300; ++i) {
+    int fsayisi =300; // kare sayısını burdan ayarlıoruz
+
+    for (int i = 0; i < fsayisi; ++i) {
         sim.guncelle();
         
         vector<float> zbuf(W*H, -1e9f);
@@ -214,7 +214,7 @@ int main() {
         // çizimkısmı
         for (int r = 0; r < sim.yuk - 1; r++) {
             for (int c = 0; c < sim.gen - 1; c++) {
-                int idx = r * sim.gen + c;
+                int idx = r*sim.gen + c;
                 ucgen_ciz(img, sim.noktalar[idx], sim.noktalar[idx+sim.gen], sim.noktalar[idx+1], isik, zbuf);
                 ucgen_ciz(img, sim.noktalar[idx+1], sim.noktalar[idx+sim.gen], sim.noktalar[idx+sim.gen+1], isik, zbuf);
             }
@@ -224,8 +224,8 @@ int main() {
         ss << "outputs/frame_" << setw(3) << setfill('0') << i << ".png";
         img.Save(ss.str());
         
-        cout << ss.str() << " saved." << endl;
+        std::cout << ss.str() << " saved." << std::endl;
     }
-    cout << "Process finished. 300 frames created." << endl;
+    std::cout << "Process finished." << fsayisi << " frames created." << std::endl;
     return 0;
 }
